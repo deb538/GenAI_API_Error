@@ -1,0 +1,62 @@
+# cloudwatch_mcp_server.py
+import os
+from datetime import datetime, timedelta
+from typing import List, Dict
+from mcp.server.fastmcp import FastMCP
+import boto3
+
+# ===============================
+# Configuration
+# ===============================
+# These environment variables must be set where this server process runs.
+CLOUDWATCH_REGION = os.environ.get("CLOUDWATCH_REGION") # e.g., "us-east-1"
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+
+# Initialize the MCP server instance
+mcp_cloudwatch = FastMCP("CloudWatch Logs Server")
+
+@mcp_cloudwatch.tool()
+def get_cloudwatch_events(log_group_name: str, start_time_iso: str, end_time_iso: str, filter_pattern: str = "") -> List[Dict]:
+    """
+    Queries CloudWatch Logs using boto3. This function is exposed as an MCP tool.
+
+    Args:
+        log_group_name: The name of the CloudWatch Log Group.
+        start_time_iso: The start time for the query in ISO 8601 format (e.g., "2023-10-27T10:00:00Z").
+        end_time_iso: The end time for the query in ISO 8601 format.
+        filter_pattern: Optional filter pattern for CloudWatch Logs.
+
+    Returns:
+        A list of log events (dictionaries). Returns a list with an error dictionary on failure.
+    """
+    if not CLOUDWATCH_REGION or not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
+        return [{"error": "AWS CloudWatch configuration missing for MCP server."}]
+    try:
+        client = boto3.client(
+            "logs",
+            region_name=CLOUDWATCH_REGION,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        )
+
+        # Convert ISO strings to datetime objects, then to milliseconds for CloudWatch API
+        start_time = datetime.fromisoformat(start_time_iso.replace('Z', '+00:00'))
+        end_time = datetime.fromisoformat(end_time_iso.replace('Z', '+00:00'))
+
+        response = client.filter_log_events(
+            logGroupName=log_group_name,
+            startTime=int(start_time.timestamp() * 1000), # CloudWatch expects milliseconds
+            endTime=int(end_time.timestamp() * 1000),
+            filterPattern=filter_pattern,
+        )
+        events = response.get('events', [])
+        return events
+    except Exception as e:
+        print(f"Error in CloudWatch MCP server while querying: {e}")
+        return [{"error": f"Failed to query CloudWatch: {e}"}]
+
+if __name__ == "__main__":
+    print("Starting CloudWatch MCP Server...")
+    mcp_cloudwatch.run(transport="stdio")
+    print("CloudWatch MCP Server stopped.")
